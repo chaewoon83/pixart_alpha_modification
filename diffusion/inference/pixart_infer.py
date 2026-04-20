@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 import torch
 from diffusers.models import AutoencoderKL
 from torchvision.utils import save_image
@@ -7,6 +9,21 @@ from diffusion.model.builder import build_model
 from diffusion.utils.checkpoint import load_checkpoint
 from diffusion.model.t5 import T5Embedder
 from diffusion import IDDPM, DPMS, SASolverSampler
+
+
+def _get_target_model(model):
+    return model.module if hasattr(model, "module") else model
+
+
+def _is_routed_mlp(mlp):
+    return (
+        hasattr(mlp, "reset_stats")
+        and hasattr(mlp, "total_tokens")
+        and hasattr(mlp, "total_light_tokens")
+        and hasattr(mlp, "total_heavy_tokens")
+        and hasattr(mlp, "last_routing_map")
+        and hasattr(mlp, "num_forwards")
+    )
 
 
 def build_inference_model(config, checkpoint_path, device="cuda", load_ema=False):
@@ -70,6 +87,7 @@ def generate_one_image(
     save_path="output.png",
     device="cuda",
     seed=0,
+    collect_stats=False,
 ):
     print("[7] start generation")
 
@@ -190,3 +208,65 @@ def generate_one_image(
 
     save_image(img, save_path)
     print(f"[14] Saved image to {save_path}")
+
+    # Save routing log only when collect_stats=True
+    if collect_stats:
+        target_model = _get_target_model(model)
+        grand_light = 0
+        grand_heavy = 0
+        grand_total = 0
+        block_logs = []
+
+        for i, block in enumerate(target_model.blocks):
+            if not hasattr(block, "mlp"):
+                continue
+            if not _is_routed_mlp(block.mlp):
+                continue
+
+            mlp = block.mlp
+
+            if mlp.total_tokens == 0:
+                continue
+
+            image_light_ratio = mlp.total_light_tokens / mlp.total_tokens
+            image_heavy_ratio = mlp.total_heavy_tokens / mlp.total_tokens
+
+            grand_light += mlp.total_light_tokens
+            grand_heavy += mlp.total_heavy_tokens
+            grand_total += mlp.total_tokens
+
+            token_routing = None
+            if mlp.last_routing_map is not None:
+                token_routing = mlp.last_routing_map.reshape(-1).tolist()
+
+            block_logs.append({
+                "block_index": i,
+                "token_last_step_light_vs_heavy": token_routing,  # 0=light, 1=heavy
+                "image_light_tokens": int(mlp.total_light_tokens),
+                "image_heavy_tokens": int(mlp.total_heavy_tokens),
+                "image_total_tokens": int(mlp.total_tokens),
+                "image_light_ratio": float(image_light_ratio),
+                "image_heavy_ratio": float(image_heavy_ratio),
+                "num_forwards": int(mlp.num_forwards),
+            })
+
+        total_log = {
+            "save_path": str(save_path),
+            "prompt": prompt,
+            "seed": int(seed),
+            "sampler": sampler_name,
+            "eval_steps": int(eval_steps),
+            "cfg_scale": float(cfg_scale),
+            "total_light_tokens": int(grand_light),
+            "total_heavy_tokens": int(grand_heavy),
+            "total_tokens": int(grand_total),
+            "total_light_ratio": float(grand_light / grand_total) if grand_total > 0 else None,
+            "total_heavy_ratio": float(grand_heavy / grand_total) if grand_total > 0 else None,
+            "blocks": block_logs,
+        }
+
+        log_path = Path(save_path).with_suffix(".routing_log.json")
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(total_log, f, indent=2)
+
+        print(f"[14-1] Saved routing stats to {log_path}")
