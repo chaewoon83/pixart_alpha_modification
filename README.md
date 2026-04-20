@@ -1,4 +1,4 @@
-# PixArt Alpha - Base vs Routed FFN Model Comparison
+# Capacity-Routed FFNs for Efficient PixArt-α
 
 A comprehensive toolkit for comparing PixArt base models with Routed FFN optimization variants. Includes inference capabilities, web-based GUI, and training utilities.
 
@@ -8,7 +8,8 @@ A comprehensive toolkit for comparing PixArt base models with Routed FFN optimiz
 
 1. [Environment Setup](#environment-setup)
 2. [GUI Inference](#gui-inference)
-3. [Training](#training)
+3. [CLI-Inference](#cli-inference)
+4. [Training](#training)
 
 ---
 
@@ -102,6 +103,39 @@ A comprehensive toolkit for comparing PixArt base models with Routed FFN optimiz
 
 ---
 
+## Inference
+
+### CLI Inference
+
+Generate images from the command line using `tools/infer_pixart.py`:
+
+#### Basic Inference
+
+```bash
+python tools/infer_pixart.py \
+  configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
+  output/Routed_Model/Routed256x256.pth \
+  --prompt "A child playing in a park" \
+  --embed_dir ./InferenceDatas/T5 \
+  --output_dir ./your_output_dir \
+  --seed your_seed_number \
+```
+
+#### With Routing Statistics
+
+Enable token routing analysis for Routed models:
+
+```bash
+python tools/infer_pixart.py \
+  configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
+  output/Routed_Model/Routed256x256.pth \
+  --prompt "A child playing in a park" \
+  --embed_dir ./InferenceDatas/T5 \
+  --output_dir ./your_output_dir \
+  --seed your_seed_number \
+  --collect_stats
+```
+
 ## Training
 
 ### Train Routed FFN Model
@@ -115,54 +149,9 @@ A comprehensive toolkit for comparing PixArt base models with Routed FFN optimiz
 
 3. **Run training:**
    ```bash
-   python train_scripts/train_test.py \
-     --config configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
-     --output_dir ./output/Routed_Model \
-     --num_train_epochs 100 \
-     --train_batch_size 8 \
-     --learning_rate 1e-4 \
-     --mixed_precision fp16
+    PYTHONPATH=. python \
+      train_scripts/train_routed.py \
+      configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
+      --work-dir your_output_dir \
+      --load-from PixArt-XL-2-256x256.pth
    ```
-
-4. **Monitor training:**
-   - Check logs in the output directory
-   - Use TensorBoard to visualize metrics:
-     ```bash
-     tensorboard --logdir ./output/Routed_Model
-     ```
-
-### Training Script Options
-
-- `train_scripts/train.py`: Standard training
-- `train_scripts/train_test.py`: Test/development training
-- `train_scripts/train_pixart_lcm.py`: LCM-specific training
-- `train_scripts/train_dreambooth.py`: DreamBooth fine-tuning
-- `train_scripts/train_selective_ffn.py`: Train selective FFN routing
-
-### LCM (Latent Consistency Model) Training
-
-For faster inference during training:
-
-```bash
-python train_scripts/train_pixart_lcm.py \
-  --config configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
-  --output_dir ./output/Routed_LCM \
-  --num_train_epochs 50
-```
----
-
-## Common Commands
-
-### Inference via CLI
-
-Generate a single image using the command line:
-
-```bash
-python tools/infer_pixart.py \
-  configs/pixart_config/PixArt_xl2_img256_small.py \
-  output/Base_Model/Base256x256.pth \
-  --prompt "A beautiful landscape" \
-  --output_dir ./InferenceDatas/Original \
-  --seed 42 \
-  --collect_stats
-```
