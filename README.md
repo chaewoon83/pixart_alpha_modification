@@ -1,6 +1,6 @@
 # Capacity-Routed FFNs for Efficient PixArt-α
 
-A comprehensive toolkit for comparing PixArt base models with Routed FFN optimization variants. Includes inference capabilities, web-based GUI, and training utilities.
+We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates computation per token, reducing unnecessary FFN operations while maintaining image quality during inference.
 
 ---
 
