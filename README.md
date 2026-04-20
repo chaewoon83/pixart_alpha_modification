@@ -115,7 +115,7 @@ We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates 
 
 | **Base Model** | **Routed** |
 |---|---|
-| ![Base Model Sample](inferenceDatas/Sample/Original/a_child_in_a.png) | ![Routed Model Sample](inferenceDatas/Sample/Routed/output_42.png) |
+| ![Base Model Sample](Images/BaseImage.png) | ![Routed Model Sample](Images/RoutedImage.png) |
 
 </div>
 
