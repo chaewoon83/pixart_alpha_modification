@@ -347,8 +347,8 @@ if generate:
         )
         st.image(ratio_image, width=360)
         st.write(
-            f"**Light FFN:** {routed_output['overall_light_ratio'] * 100:.1f}%    "
-            f"**Heavy FFN:** {routed_output['overall_heavy_ratio'] * 100:.1f}%"
+            f"**Low-Capacity FFN:** {routed_output['overall_light_ratio'] * 100:.1f}%    "
+            f"**High-Capacity FFN:** {routed_output['overall_heavy_ratio'] * 100:.1f}%"
         )
 
     st.divider()

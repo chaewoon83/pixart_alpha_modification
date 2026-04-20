@@ -101,9 +101,9 @@ We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates 
 
 - **Base Model**: Original PixArt model results
 - **Routed Model**: PixArt with Routed FFN optimization
-- **Token Routing Ratio**: Percentage of tokens processed by Light vs Heavy FFN modules
-  - **Light FFN**: Faster, lower-quality computation path
-  - **Heavy FFN**: Slower, higher-quality computation path
+- **Token Routing Ratio**: Percentage of tokens processed by Low-Capacity vs High-Capacity FFN modules
+  - **Low-capacity FFN**: Faster, lower-quality computation path
+  - **High-capacity FFN**: Slower, higher-quality computation path
 - **Inference Time**: Total time to generate the image
 - **Token Counts**: Number of tokens routed to each FFN type
 
@@ -140,9 +140,11 @@ Additionally, inference requires VAE and T5 encoder weights:
 - VAE weights:
   - `output/pretrained_models/sd-vae-ft-ema/`
   - This should contain the `sd-vae-ft-ema` model files.
+  - Download from: https://huggingface.co/stabilityai/sd-vae-ft-ema/tree/main
 - T5 weights:
   - `output/pretrained_models/t5_ckpts/t5-v1_1-xxl/`
   - This should contain the `t5-v1_1-xxl` tokenizer and encoder files.
+  - Download from: https://huggingface.co/google/t5-v1_1-xxl/tree/main
 
 If your machine has internet access, the VAE and T5 files will normally be downloaded automatically when first running inference. If you need to install them manually, download from the appropriate source and place them into the directories above.
 
