@@ -103,6 +103,41 @@ We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates 
 
 ---
 
+## Pretrained Checkpoints
+
+Before running GUI or CLI inference, you must place the pretrained model weights in the expected checkpoint paths.
+
+- Base model checkpoint:
+  - `output/Base_Model/Base256x256.pth`
+  - Download from: https://huggingface.co/PixArt-alpha/PixArt-alpha/blob/main/PixArt-XL-2-256x256.pth
+- Routed model checkpoint:
+  - `output/Routed_Model/Routed256x256.pth`
+  - Download from: https://example.com/path/to/routed/Routed256x256.pth
+
+
+
+Additionally, inference requires VAE and T5 encoder weights:
+
+- VAE weights:
+  - `output/pretrained_models/sd-vae-ft-ema/`
+  - This should contain the `sd-vae-ft-ema` model files.
+- T5 weights:
+  - `output/pretrained_models/t5_ckpts/t5-v1_1-xxl/`
+  - This should contain the `t5-v1_1-xxl` tokenizer and encoder files.
+
+If your machine has internet access, the VAE and T5 files will normally be downloaded automatically when first running inference. If you need to install them manually, download from the appropriate source and place them into the directories above.
+
+If the directories do not exist yet, create them first:
+
+```bash
+mkdir -p output/Base_Model
+mkdir -p output/Routed_Model
+mkdir -p output/pretrained_models/sd-vae-ft-ema
+mkdir -p output/pretrained_models/t5_ckpts/t5-v1_1-xxl
+```
+
+---
+
 ## Inference
 
 ### CLI Inference
@@ -126,7 +161,7 @@ Enable token routing analysis for Routed models:
 
 ```bash
 python tools/infer_pixart.py \
-  configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
+  configs/pixart_config/PixArt_xl2_img256_small.py \
   output/Routed_Model/Routed256x256.pth \
   --prompt "A child playing in a park" \
   --output_dir ./your_output_dir \
@@ -134,11 +169,43 @@ python tools/infer_pixart.py \
   --collect_stats
 ```
 
+#### Base Model Inference
+```bash
+PYTHONPATH=. python tools/infer_pixart_withembedding.py \
+  configs/pixart_config/PixArt_xl2_img256_small.py \
+  output/Base_Model/Base256x256.pth \
+  --prompt "A child playing in a park" \
+  --output_dir ./InferenceDatas/Original \
+  --seed 42
+```
 ## Training
 
 ### Train Routed FFN Model
 
 1. **Prepare your dataset** in the appropriate format (see `diffusion/data/datasets/`)
+
+   By default, the routed training config uses:
+   - `config.data_root = 'data'`
+   - `config.data.root = 'coco_train'`
+
+   That means the training data should be placed under:
+   ```bash
+   ./data/coco_train/
+   ```
+
+   Required subfolders and files:
+   ```bash
+   ./data/coco_train/partition/data_info.json
+   ./data/coco_train/images/<...>.jpg
+   ./data/coco_train/caption_feature_wmask/<...>.npz
+   ./data/coco_train/img_vae_features_256resolution/noflip/<...>.npy
+   ```
+
+   The dataset loader expects:
+   - `partition/data_info.json`: metadata list with `path`, `prompt`, `ratio`, etc.
+   - `images/`: raw training jpg/png images
+   - `caption_feature_wmask/`: precomputed caption feature `.npz` files
+   - `img_vae_features_256resolution/noflip/`: precomputed VAE feature `.npy` files
 
 2. **Configure training parameters** in your chosen config file:
    ```bash
