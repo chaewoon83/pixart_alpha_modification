@@ -131,7 +131,7 @@ Before running GUI or CLI inference, you must place the pretrained model weights
   - Download from: https://huggingface.co/PixArt-alpha/PixArt-alpha/blob/main/PixArt-XL-2-256x256.pth
 - Routed model checkpoint:
   - `output/Routed_Model/Routed256x256.pth`
-  - Download from: https://example.com/path/to/routed/Routed256x256.pth
+  - Download from: https://drive.google.com/file/d/1hswvJdeTVBWMikeShsyCuz33pmmtPidv/view?usp=sharing
 
 
 
