@@ -116,7 +116,6 @@ python tools/infer_pixart.py \
   configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
   output/Routed_Model/Routed256x256.pth \
   --prompt "A child playing in a park" \
-  --embed_dir ./InferenceDatas/T5 \
   --output_dir ./your_output_dir \
   --seed your_seed_number \
 ```
@@ -130,7 +129,6 @@ python tools/infer_pixart.py \
   configs/pixart_config/PixArt_xl2_img256_small_Routed.py \
   output/Routed_Model/Routed256x256.pth \
   --prompt "A child playing in a park" \
-  --embed_dir ./InferenceDatas/T5 \
   --output_dir ./your_output_dir \
   --seed your_seed_number \
   --collect_stats
