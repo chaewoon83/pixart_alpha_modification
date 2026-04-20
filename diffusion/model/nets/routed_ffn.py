@@ -39,7 +39,7 @@ class RoutedFFN(nn.Module):
         self.last_hard_light_ratio = None
         self.last_hard_heavy_ratio = None
 
-        self.last_routing_map = None   # 마지막 forward의 token별 hard routing
+        self.last_routing_map = None   # Last forward pass token-by-token hard routing
         self.total_light_tokens = 0
         self.total_heavy_tokens = 0
         self.total_tokens = 0

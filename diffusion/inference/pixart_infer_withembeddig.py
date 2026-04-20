@@ -224,7 +224,7 @@ def generate_one_image(
     else:
         raise ValueError(f"Unknown sampler: {sampler_name}")
 
-    # collect_stats=True 일 때만 routing log 저장
+    # Save routing log only when collect_stats=True
     if collect_stats:
         grand_light = 0
         grand_heavy = 0
