@@ -13,7 +13,7 @@ import torch.nn as nn
 from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import DistributedType
 from diffusers.models import AutoencoderKL
-from runner import LogBuffer
+from mmcv.runner import LogBuffer
 from torch.utils.data import RandomSampler
 
 from diffusion import IDDPM
@@ -21,14 +21,12 @@ from diffusion.data.builder import build_dataset, build_dataloader, set_data_roo
 from diffusion.model.builder import build_model
 from diffusion.utils.checkpoint import save_checkpoint, load_checkpoint
 from diffusion.utils.data_sampler import AspectRatioBatchSampler, BalancedAspectRatioBatchSampler
-from diffusion.utils.dist_utils import get_world_size
-from torch.nn.utils import clip_grad_norm_
+from diffusion.utils.dist_utils import get_world_size, clip_grad_norm_
 from diffusion.utils.logger import get_root_logger
 from diffusion.utils.lr_scheduler import build_lr_scheduler
 from diffusion.utils.misc import set_random_seed, read_config, init_random_seed, DebugUnderflowOverflow
 from diffusion.utils.optimizer import build_optimizer, auto_scale_lr
 from diffusion.model.nets.routed_ffn import RoutedFFN
-
 warnings.filterwarnings("ignore")  # ignore warning
 
 current_file_path = Path(__file__).resolve()
@@ -91,15 +89,87 @@ def train():
                 # Predict the noise residual
                 optimizer.zero_grad()
                 loss_term = train_diffusion.training_losses(
-                    model, clean_images, timesteps,
+                    model,
+                    clean_images,
+                    timesteps,
                     model_kwargs=dict(y=y, mask=y_mask, data_info=data_info)
                 )
                 diffusion_loss = loss_term["loss"].mean()
 
                 model_unwrapped = accelerator.unwrap_model(model)
-                router_loss = model_unwrapped.router_loss
+                routed_modules = [m for m in model_unwrapped.modules() if isinstance(m, RoutedFFN)]
+
+                router_loss_list = []
+                entropy_list = []
+                light_ratio_list = []
+                heavy_ratio_list = []
+                confidence_list = []
+                hard_light_ratio_list = []
+                hard_heavy_ratio_list = []
+
+                for m in routed_modules:
+                    if m.last_router_loss is not None:
+                        router_loss_list.append(m.last_router_loss)
+                    if m.last_entropy is not None:
+                        entropy_list.append(m.last_entropy)
+                    if m.last_light_ratio is not None:
+                        light_ratio_list.append(m.last_light_ratio)
+                    if m.last_heavy_ratio is not None:
+                        heavy_ratio_list.append(m.last_heavy_ratio)
+                    if m.last_confidence is not None:
+                        confidence_list.append(m.last_confidence)
+                    if m.last_hard_light_ratio is not None:
+                        hard_light_ratio_list.append(m.last_hard_light_ratio)
+                    if m.last_hard_heavy_ratio is not None:
+                        hard_heavy_ratio_list.append(m.last_hard_heavy_ratio)
+
+                if len(router_loss_list) > 0:
+                    router_loss = torch.stack(router_loss_list).mean()
+                else:
+                    router_loss = torch.tensor(0.0, device=clean_images.device)
+
+                if len(entropy_list) > 0:
+                    routing_entropy = torch.stack(entropy_list).mean()
+                else:
+                    routing_entropy = torch.tensor(0.0, device=clean_images.device)
+
+                if len(light_ratio_list) > 0:
+                    light_ratio = torch.stack(light_ratio_list).mean()
+                else:
+                    light_ratio = torch.tensor(0.0, device=clean_images.device)
+
+                if len(heavy_ratio_list) > 0:
+                    heavy_ratio = torch.stack(heavy_ratio_list).mean()
+                else:
+                    heavy_ratio = torch.tensor(0.0, device=clean_images.device)
+
+                if len(confidence_list) > 0:
+                    routing_confidence = torch.stack(confidence_list).mean()
+                else:
+                    routing_confidence = torch.tensor(0.0, device=clean_images.device)
+
+                if len(hard_light_ratio_list) > 0:
+                    hard_light_ratio = torch.stack(hard_light_ratio_list).mean()
+                else:
+                    hard_light_ratio = torch.tensor(0.0, device=clean_images.device)
+
+                if len(hard_heavy_ratio_list) > 0:
+                    hard_heavy_ratio = torch.stack(hard_heavy_ratio_list).mean()
+                else:
+                    hard_heavy_ratio = torch.tensor(0.0, device=clean_images.device)
 
                 loss = diffusion_loss + lambda_router * router_loss
+
+                if global_step < 5:
+                    print(f"[Step {global_step}] diffusion_loss:", diffusion_loss.item())
+                    print(f"[Step {global_step}] router_loss:", router_loss.item())
+                    print(f"[Step {global_step}] routing_entropy:", routing_entropy.item())
+                    print(f"[Step {global_step}] light_ratio:", light_ratio.item())
+                    print(f"[Step {global_step}] heavy_ratio:", heavy_ratio.item())
+                    print(f"[Step {global_step}] hard_light_ratio:", hard_light_ratio.item())
+                    print(f"[Step {global_step}] hard_heavy_ratio:", hard_heavy_ratio.item())
+                    print(f"[Step {global_step}] routing_confidence:", routing_confidence.item())
+
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), config.gradient_clip)
@@ -108,22 +178,18 @@ def train():
                 if accelerator.sync_gradients:
                     ema_update(model_ema, model, config.ema_rate)
 
-            # Freeze all parameters
-            for param in model.parameters():
-                param.requires_grad = False
-
-            # Unfreeze router and light FFN parameters
-            for module in model.modules():
-                if isinstance(module, RoutedFFN):
-            for param in module.router.parameters():
-                param.requires_grad = True
-            for param in module.light.parameters():
-                param.requires_grad = True
             lr = lr_scheduler.get_last_lr()[0]
+
             logs = {
                 "loss": loss.item(),
                 "diffusion_loss": diffusion_loss.item(),
                 "router_loss": router_loss.item(),
+                "routing_entropy": routing_entropy.item(),
+                "light_ratio": light_ratio.item(),
+                "heavy_ratio": heavy_ratio.item(),
+                "hard_light_ratio": hard_light_ratio.item(),
+                "hard_heavy_ratio": hard_heavy_ratio.item(),
+                "routing_confidence": routing_confidence.item(),
             }
             if grad_norm is not None:
                 logs.update(grad_norm=accelerator.gather(grad_norm).mean().item())
@@ -149,6 +215,9 @@ def train():
             global_step += 1
             data_time_start= time.time()
 
+            # if global_step >= 100:
+            #     logger.info("Reached 10 steps. Stopping training early.")
+            #     return
 
             if ((epoch - 1) * len(train_dataloader) + step + 1) % config.save_model_steps == 0:
                 accelerator.wait_for_everyone()
@@ -288,6 +357,8 @@ if __name__ == '__main__':
                         learn_sigma=learn_sigma,
                         pred_sigma=pred_sigma,
                         **model_kwargs).train()
+    num_routed = sum(1 for m in model.modules() if isinstance(m, RoutedFFN))
+    print("Number of RoutedFFN modules:", num_routed)
     logger.info(f"{model.__class__.__name__} Model Parameters: {sum(p.numel() for p in model.parameters()):,}")
     model_ema = deepcopy(model).eval()
 
@@ -321,13 +392,34 @@ if __name__ == '__main__':
         train_dataloader = build_dataloader(dataset, batch_sampler=batch_sampler, num_workers=config.num_workers)
     else:
         train_dataloader = build_dataloader(dataset, num_workers=config.num_workers, batch_size=config.train_batch_size, shuffle=True)
+    # Freeze all
+    for param in model.parameters():
+        param.requires_grad = False
 
+    # Unfreeze router + light FFN
+    for module in model.modules():
+        if isinstance(module, RoutedFFN):
+            for param in module.router.parameters():
+                param.requires_grad = True
+            for param in module.light.parameters():
+                param.requires_grad = True
+    #check router params
+    trainable_names = [name for name, p in model.named_parameters() if p.requires_grad]
+    print("Trainable parameter count:", len(trainable_names))
+    for name in trainable_names[:30]:
+        print(name)
     # build optimizer and lr scheduler
     lr_scale_ratio = 1
     if config.get('auto_lr', None):
         lr_scale_ratio = auto_scale_lr(config.train_batch_size * get_world_size() * config.gradient_accumulation_steps,
                                        config.optimizer, **config.auto_lr)
-    optimizer = build_optimizer(model, config.optimizer)
+    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+    optimizer = torch.optim.AdamW(
+        trainable_params,
+        lr=config.optimizer['lr'],
+        weight_decay=config.optimizer['weight_decay'],
+        eps=config.optimizer['eps']
+    )
     lr_scheduler = build_lr_scheduler(config, optimizer, train_dataloader, lr_scale_ratio)
 
     timestamp = time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
@@ -355,4 +447,6 @@ if __name__ == '__main__':
     # objects in the same order you gave them to the prepare method.
     model, model_ema = accelerator.prepare(model, model_ema)
     optimizer, train_dataloader, lr_scheduler = accelerator.prepare(optimizer, train_dataloader, lr_scheduler)
+    print("MODEL DEVICE:", next(model.parameters()).device)
+
     train()

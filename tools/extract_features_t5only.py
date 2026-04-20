@@ -128,7 +128,7 @@ def extract_caption_t5():
 
     t5 = T5Embedder(
         device="cuda",
-        local_cache=False,
+        local_cache=True,
         cache_dir=f'{args.pretrained_models_dir}/t5_ckpts',
         model_max_length=120
     )
@@ -246,4 +246,3 @@ if __name__ == '__main__':
     image_resize = args.img_size
 
     extract_caption_t5()
-    extract_img_vae()

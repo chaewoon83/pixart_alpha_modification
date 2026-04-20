@@ -20,36 +20,118 @@ from diffusion.model.builder import MODELS
 from diffusion.model.utils import auto_grad_checkpoint, to_2tuple
 from diffusion.model.nets.PixArt_blocks import t2i_modulate, CaptionEmbedder, WindowAttention, MultiHeadCrossAttention, T2IFinalLayer, TimestepEmbedder, LabelEmbedder, FinalLayer
 from diffusion.utils.logger import get_root_logger
-
+from diffusion.model.nets.routed_ffn import RoutedFFN
+from diffusion.model.nets.selective_ffn import TokenSelectiveFFN
 
 class PixArtBlock(nn.Module):
     """
     A PixArt block with adaptive layer norm (adaLN-single) conditioning.
     """
 
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, drop_path=0., window_size=0, input_size=None, use_rel_pos=False, **block_kwargs):
+class PixArtBlock(nn.Module):
+    """
+    A PixArt block with adaptive layer norm (adaLN-single) conditioning.
+    """
+
+    def __init__(
+        self,
+        hidden_size,
+        num_heads,
+        mlp_ratio=4.0,
+        drop_path=0.,
+        window_size=0,
+        input_size=None,
+        use_rel_pos=False,
+        use_selective_ffn=True,
+        selective_keep_ratio=0.8,
+        selective_mode="dense",
+        **block_kwargs
+    ):
         super().__init__()
         self.hidden_size = hidden_size
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = WindowAttention(hidden_size, num_heads=num_heads, qkv_bias=True,
-                                    input_size=input_size if window_size == 0 else (window_size, window_size),
-                                    use_rel_pos=use_rel_pos, **block_kwargs)
+        self.attn = WindowAttention(
+            hidden_size,
+            num_heads=num_heads,
+            qkv_bias=True,
+            input_size=input_size if window_size == 0 else (window_size, window_size),
+            use_rel_pos=use_rel_pos,
+            **block_kwargs
+        )
         self.cross_attn = MultiHeadCrossAttention(hidden_size, num_heads, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # to be compatible with lower version pytorch
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0)
+        self.use_selective_ffn = use_selective_ffn
+
+        if use_selective_ffn:
+            self.mlp = TokenSelectiveFFN(
+                hidden_size=hidden_size,
+                mlp_ratio=mlp_ratio,
+                target_ratio=selective_keep_ratio,
+                lambda_budget=1e-2,
+                detach_attn_feat=True,
+                gate_temperature=1.0,
+                drop=0.0,
+                attn_feat_dim=3,  
+            )
+        else:
+            approx_gelu = lambda: nn.GELU(approximate="tanh")
+            self.mlp = Mlp(
+                in_features=hidden_size,
+                hidden_features=int(hidden_size * mlp_ratio),
+                act_layer=approx_gelu,
+                drop=0.0,
+            )
+
+        self.last_router_loss = None
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.window_size = window_size
         self.scale_shift_table = nn.Parameter(torch.randn(6, hidden_size) / hidden_size ** 0.5)
 
+    def compute_attn_features(self, x, attn):
+        attn_mean = attn.mean(dim=1)  # [B, N, N]
+
+        received = attn_mean.sum(dim=1)  # [B, N]
+        entropy = -(attn_mean * torch.log(attn_mean.clamp_min(1e-8))).sum(dim=-1)  # [B, N]
+        norm = x.norm(dim=-1)  # [B, N]
+
+        feat = torch.stack([received, entropy, norm], dim=-1)  # [B, N, 3]
+        feat = (feat - feat.mean(dim=1, keepdim=True)) / (
+            feat.std(dim=1, keepdim=True).clamp_min(1e-6)
+        )
+        return feat
+            
     def forward(self, x, y, t, mask=None, **kwargs):
         B, N, C = x.shape
 
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (self.scale_shift_table[None] + t.reshape(B, 6, -1)).chunk(6, dim=1)
-        x = x + self.drop_path(gate_msa * self.attn(t2i_modulate(self.norm1(x), shift_msa, scale_msa)).reshape(B, N, C))
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+            self.scale_shift_table[None] + t.reshape(B, 6, -1)
+        ).chunk(6, dim=1)
+
+        attn_in = t2i_modulate(self.norm1(x), shift_msa, scale_msa)
+
+        if self.use_selective_ffn:
+            attn_out, attn_map = self.attn(attn_in, return_attn=True)
+            x = x + self.drop_path(gate_msa * attn_out.reshape(B, N, C))
+        else:
+            x = x + self.drop_path(gate_msa * self.attn(attn_in).reshape(B, N, C))
+            attn_map = None
+
         x = x + self.cross_attn(x, y, mask)
-        x = x + self.drop_path(gate_mlp * self.mlp(t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)))
+
+        mlp_in = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
+
+        if self.use_selective_ffn:
+            # use calculated attention map 
+            attn_feat = self.compute_attn_features(mlp_in, attn_map)  # [B, N, 3]
+            del attn_map
+
+            mlp_out = self.mlp(mlp_in, attn_feat=attn_feat)
+            self.last_router_loss = self.mlp.last_router_loss
+        else:
+            mlp_out = self.mlp(mlp_in)
+            self.last_router_loss = None
+
+        x = x + self.drop_path(gate_mlp * mlp_out)
 
         return x
 
@@ -57,7 +139,6 @@ class PixArtBlock(nn.Module):
 #############################################################################
 #                                 Core PixArt Model                                #
 #################################################################################
-@MODELS.register_module()
 class PixArt(nn.Module):
     """
     Diffusion model with a Transformer backbone.
@@ -72,7 +153,7 @@ class PixArt(nn.Module):
         self.out_channels = in_channels * 2 if pred_sigma else in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
-        self.lewei_scale = lewei_scale,
+        self.lewei_scale = lewei_scale
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -88,11 +169,21 @@ class PixArt(nn.Module):
         )
         self.y_embedder = CaptionEmbedder(in_channels=caption_channels, hidden_size=hidden_size, uncond_prob=class_dropout_prob, act_layer=approx_gelu, token_num=model_max_length)
         drop_path = [x.item() for x in torch.linspace(0, drop_path, depth)]  # stochastic depth decay rule
+        selective_block_ids = set(range(10, 21))   # 10~20번 blocks only selective
+
         self.blocks = nn.ModuleList([
-            PixArtBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, drop_path=drop_path[i],
-                          input_size=(input_size // patch_size, input_size // patch_size),
-                          window_size=window_size if i in window_block_indexes else 0,
-                          use_rel_pos=use_rel_pos if i in window_block_indexes else False)
+            PixArtBlock(
+                hidden_size,
+                num_heads,
+                mlp_ratio=mlp_ratio,
+                drop_path=drop_path[i],
+                input_size=(input_size // patch_size, input_size // patch_size),
+                window_size=window_size if i in window_block_indexes else 0,
+                use_rel_pos=use_rel_pos if i in window_block_indexes else False,
+                use_selective_ffn=(i in selective_block_ids),
+                selective_keep_ratio=0.8,
+                selective_mode="dense",  
+            )
             for i in range(depth)
         ])
         self.final_layer = T2IFinalLayer(hidden_size, patch_size, self.out_channels)
@@ -112,6 +203,7 @@ class PixArt(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N, 1, 120, C) tensor of class labels
         """
+        self.router_loss = 0.0
         x = x.to(self.dtype)
         timestep = timestep.to(self.dtype)
         y = y.to(self.dtype)
@@ -130,8 +222,12 @@ class PixArt(nn.Module):
         else:
             y_lens = [y.shape[2]] * y.shape[0]
             y = y.squeeze(1).view(1, -1, x.shape[-1])
+        self.router_loss = 0.0
         for block in self.blocks:
-            x = auto_grad_checkpoint(block, x, y, t0, y_lens)  # (N, T, D) #support grad checkpoint
+            x = auto_grad_checkpoint(block, x, y, t0, y_lens)
+            block_router_loss = getattr(block, "last_router_loss", None)
+            if block_router_loss is not None:
+                self.router_loss += block_router_loss
         x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
         return x
@@ -145,20 +241,17 @@ class PixArt(nn.Module):
         return model_out.chunk(2, dim=1)[0]
 
     def forward_with_cfg(self, x, timestep, y, cfg_scale, mask=None, **kwargs):
-        """
-        Forward pass of PixArt, but also batches the unconditional forward pass for classifier-free guidance.
-        """
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
-        model_out = self.forward(combined, timestep, y, mask, kwargs)
+        model_out = self.forward(combined, timestep, y, mask, **kwargs)
         model_out = model_out['x'] if isinstance(model_out, dict) else model_out
-        eps, rest = model_out[:, :3], model_out[:, 3:]
+
+        eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
-        return torch.cat([eps, rest], dim=1)
 
+        return torch.cat([eps, rest], dim=1)
     def unpatchify(self, x):
         """
         x: (N, T, patch_size**2 * C)
@@ -268,5 +361,5 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 #                                   PixArt Configs                                  #
 #################################################################################
 @MODELS.register_module()
-def PixArt_XL_2(**kwargs):
+def PixArt_XL_2_Selective(**kwargs):
     return PixArt(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)

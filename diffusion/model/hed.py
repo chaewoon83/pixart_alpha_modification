@@ -139,7 +139,7 @@ def main():
     for img, path in tqdm(dataloader):
         out = hed(img.cuda())
         for p, o in zip(path, out):
-            save = f'data/InternalData/hed_feature_{image_resize}/' + p.replace('.png', '.npz')
+            save = f'data/InternalData/hed_feature_{image_resize}/' + p.replace('.jpg', '.npz')
             if os.path.exists(save):
                 continue
             os.makedirs(os.path.dirname(save), exist_ok=True)

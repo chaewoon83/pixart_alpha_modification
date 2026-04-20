@@ -106,46 +106,73 @@ class WindowAttention(Attention_):
                 nn.init.trunc_normal_(self.rel_pos_h, std=0.02)
                 nn.init.trunc_normal_(self.rel_pos_w, std=0.02)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, return_attn=False):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-        q, k, v = qkv.unbind(2)
-        if use_fp32_attention := getattr(self, 'fp32_attention', False):
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)   # [B, H, N, D]
+
+        if getattr(self, 'fp32_attention', False):
             q, k, v = q.float(), k.float(), v.float()
 
-        attn_bias = None
         if mask is not None:
-            attn_bias = torch.zeros([B * self.num_heads, q.shape[1], k.shape[1]], dtype=q.dtype, device=q.device)
-            attn_bias.masked_fill_(mask.squeeze(1).repeat(self.num_heads, 1, 1) == 0, float('-inf'))
-        x = xformers.ops.memory_efficient_attention(q, k, v, p=self.attn_drop.p, attn_bias=attn_bias)
+            raise NotImplementedError("return_attn path currently supports mask=None only")
 
-        x = x.view(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
+        attn = (q @ k.transpose(-2, -1)) * self.scale   # [B, H, N, N]
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        out = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+
+        if return_attn:
+            return out, attn
+        return out
 
 
 #################################################################################
 #   AMP attention with fp32 softmax to fix loss NaN problem during training     #
 #################################################################################
 class Attention(Attention_):
-    def forward(self, x):
+    # def forward(self, x):
+    #     B, N, C = x.shape
+    #     qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+    #     q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
+    #     use_fp32_attention = getattr(self, 'fp32_attention', False)
+    #     if use_fp32_attention:
+    #         q, k = q.float(), k.float()
+    #     with torch.cuda.amp.autocast(enabled=not use_fp32_attention):
+    #         attn = (q @ k.transpose(-2, -1)) * self.scale
+    #         attn = attn.softmax(dim=-1)
+
+    #     attn = self.attn_drop(attn)
+
+    #     x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+    #     x = self.proj(x)
+    #     x = self.proj_drop(x)
+    #     return x
+    def forward(self, x, return_attn=False):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
+
         use_fp32_attention = getattr(self, 'fp32_attention', False)
         if use_fp32_attention:
             q, k = q.float(), k.float()
+
         with torch.cuda.amp.autocast(enabled=not use_fp32_attention):
             attn = (q @ k.transpose(-2, -1)) * self.scale
             attn = attn.softmax(dim=-1)
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
+        out = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+
+        if return_attn:
+            return out, attn
+        return out
 
 
 class FinalLayer(nn.Module):

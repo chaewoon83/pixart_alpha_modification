@@ -22,7 +22,9 @@ import accelerate
 
 from diffusion import IDDPM
 from diffusion.utils.dist_utils import get_world_size, clip_grad_norm_
-from diffusion.data.builder import build_dataset, build_dataloader, set_data_root
+from diffusion.data.builder import build_d
+
+ataset, build_dataloader, set_data_root
 from diffusion.utils.logger import get_root_logger
 from diffusion.utils.misc import set_random_seed, read_config, init_random_seed, DebugUnderflowOverflow
 from diffusion.utils.optimizer import build_optimizer, auto_scale_lr

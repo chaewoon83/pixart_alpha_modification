@@ -159,6 +159,9 @@ output_demo/
 output_debug/
 data/
 output/
+InferenceDatas/
+
+!/diffusion/data/
 
 #cache for docker
 docker/cache/gradio

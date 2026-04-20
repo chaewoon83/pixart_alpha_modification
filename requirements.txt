@@ -1,12 +1,12 @@
 torch==2.1.1
 torchaudio==2.1.1
 torchvision==0.16.1
-git+https://github.com/huggingface/diffusers
+diffusers==0.24.0
 timm==0.6.12
-accelerate
+accelerate==0.25.0
 tensorboard
 tensorboardX
-transformers
+transformers==4.36.2
 sentencepiece~=0.1.99
 ftfy
 beautifulsoup4
@@ -16,6 +16,6 @@ yapf==0.40.1
 opencv-python
 bs4
 einops
-xformers
+xformers==0.0.23
 optimum
 peft==0.6.2

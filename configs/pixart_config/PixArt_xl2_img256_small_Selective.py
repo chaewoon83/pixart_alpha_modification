@@ -18,7 +18,7 @@ image_size = 256
 window_block_indexes=[]
 window_size=0
 use_rel_pos=False
-model = 'PixArt_XL_2'
+model = 'PixArt_XL_2_Selective'
 fp32_attention = False
 load_from = None
 vae_pretrained = "stabilityai/sd-vae-ft-ema"
@@ -36,5 +36,3 @@ lr_schedule_args = dict(num_warmup_steps=100)
 
 log_interval = 10
 save_model_epochs=1
-work_dir = 'output/debug'
-load_from = "PixArt-XL-2-256x256.pth"
