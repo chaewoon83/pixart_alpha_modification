@@ -91,6 +91,12 @@ We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates 
    - Compare generated images side-by-side
    - View inference time and token routing statistics
 
+#### GUI Screenshots
+
+
+ ![GUI 1](Images/GUI1.png)
+ ![GUI 2](Images/GUI2.png)
+
 ### Output Interpretation
 
 - **Base Model**: Original PixArt model results
@@ -100,6 +106,19 @@ We propose a token-adaptive routed FFN for PixArt-α that dynamically allocates 
   - **Heavy FFN**: Slower, higher-quality computation path
 - **Inference Time**: Total time to generate the image
 - **Token Counts**: Number of tokens routed to each FFN type
+
+### Gallery
+
+#### Model Comparison Examples
+
+<div align="center">
+
+| **Base Model** | **Routed** |
+|---|---|
+| ![Base Model Sample](inferenceDatas/Sample/Original/a_child_in_a.png) | ![Routed Model Sample](inferenceDatas/Sample/Routed/output_42.png) |
+
+</div>
+
 
 ---
 
